@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 
 @Dao
 interface HydorDao {
@@ -17,7 +18,32 @@ interface HydorDao {
     suspend fun insertTest(test: HydraulicTestEntity): Long
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertReading(reading: PressureReadingEntity): Long
+    suspend fun insertReadingRaw(reading: PressureReadingEntity): Long
+
+    @Query("SELECT COUNT(*) FROM readings WHERE testId = :testId")
+    suspend fun getReadingCount(testId: Long): Int
+
+    @Transaction
+    suspend fun insertReading(reading: PressureReadingEntity): Long {
+        val existingCount = getReadingCount(reading.testId)
+        if (existingCount == 0 && reading.source != "PROGRAMMED") {
+            val test = getTest(reading.testId)
+            if (test != null) {
+                insertReadingRaw(
+                    PressureReadingEntity(
+                        testId = reading.testId,
+                        capturedAt = if (test.startedAt > 0L) test.startedAt else (reading.capturedAt - 1L),
+                        detectedPressureBar = null,
+                        confirmedPressureBar = test.targetPressureBar,
+                        imagePath = null,
+                        detectionConfidence = null,
+                        source = "PROGRAMMED"
+                    )
+                )
+            }
+        }
+        return insertReadingRaw(reading)
+    }
 
     @Query("SELECT * FROM projects WHERE name = :name LIMIT 1")
     suspend fun findProjectByName(name: String): ProjectEntity?
