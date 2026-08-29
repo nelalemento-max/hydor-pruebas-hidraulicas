@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import bo.com.hydor.pruebashidraulicas.data.HydorDatabase
 import bo.com.hydor.pruebashidraulicas.data.PressureReadingEntity
 import kotlinx.coroutines.launch
@@ -137,50 +138,116 @@ fun CameraReadingScreen(testId: Long, onSaved: () -> Unit, onCancel: () -> Unit)
 @Composable
 private fun ColumnScope.GaugeCamera(gaugeMaxBar: Double, calibration: GaugeCalibration, onCaptured: (File, GaugeEstimate) -> Unit, onCancel: () -> Unit) {
     val context = LocalContext.current
-    val lifecycleOwner = context as androidx.lifecycle.LifecycleOwner
+    val lifecycleOwner = LocalLifecycleOwner.current
     val executor = remember { Executors.newSingleThreadExecutor() }
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
     var captureError by remember { mutableStateOf<String?>(null) }
-    DisposableEffect(Unit) { onDispose { executor.shutdown() } }
+    var restartKey by remember { mutableIntStateOf(0) }
+    var providerForCleanup by remember { mutableStateOf<ProcessCameraProvider?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching { providerForCleanup?.unbindAll() }
+            executor.shutdown()
+        }
+    }
 
     Box(Modifier.fillMaxWidth().weight(1f).background(Color.Black, RoundedCornerShape(18.dp))) {
-        AndroidView(factory = { ctx ->
-            PreviewView(ctx).apply {
-                scaleType = PreviewView.ScaleType.FILL_CENTER
-                val providerFuture = ProcessCameraProvider.getInstance(ctx)
-                providerFuture.addListener({
-                    val provider = providerFuture.get()
-                    val preview = Preview.Builder().build().also { it.setSurfaceProvider(surfaceProvider) }
-                    val capture = ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build()
-                    imageCapture = capture
-                    try { provider.unbindAll(); provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, capture) }
-                    catch (e: Exception) { captureError = "No se pudo iniciar la cámara: ${e.message}" }
-                }, ContextCompat.getMainExecutor(ctx))
-            }
-        }, modifier = Modifier.fillMaxSize())
+        key(restartKey) {
+            AndroidView(
+                factory = { ctx ->
+                    PreviewView(ctx).apply {
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        scaleType = PreviewView.ScaleType.FILL_CENTER
+                        val previewView = this
+                        val providerFuture = ProcessCameraProvider.getInstance(ctx)
+                        providerFuture.addListener({
+                            try {
+                                val provider = providerFuture.get()
+                                providerForCleanup = provider
+                                val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+                                val capture = ImageCapture.Builder()
+                                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                                    .build()
+                                provider.unbindAll()
+                                provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, capture)
+                                imageCapture = capture
+                                captureError = null
+                            } catch (e: Exception) {
+                                imageCapture = null
+                                captureError = "La cámara tardó demasiado o está ocupada. Cierra otras apps que usen la cámara y toca REINTENTAR."
+                            }
+                        }, ContextCompat.getMainExecutor(ctx))
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
         Canvas(Modifier.fillMaxSize()) {
-            val radius = min(size.width, size.height) * 0.34f; val center = Offset(size.width / 2f, size.height / 2f)
+            val radius = min(size.width, size.height) * 0.34f
+            val center = Offset(size.width / 2f, size.height / 2f)
             drawCircle(Color.White.copy(alpha = 0.92f), radius, center, style = Stroke(width = 4f))
             drawLine(Color.White.copy(alpha = 0.7f), Offset(center.x - 22f, center.y), Offset(center.x + 22f, center.y), 2f)
             drawLine(Color.White.copy(alpha = 0.7f), Offset(center.x, center.y - 22f), Offset(center.x, center.y + 22f), 2f)
         }
-        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = 0.55f)).padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+
+        Column(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = 0.58f)).padding(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Text("Escala configurada: 0–${String.format(java.util.Locale.US, "%.0f", gaugeMaxBar)} bar", color = Color.White, fontSize = 12.sp)
             Text(if (calibration.isCalibrated) "Usando calibración aprendida" else "Modo aprendizaje: confirma el valor después de la foto", color = Color.White, fontSize = 11.sp)
             Spacer(Modifier.height(8.dp))
-            Button(onClick = {
-                val capture = imageCapture ?: return@Button
-                val dir = File(context.filesDir, "hydor_photos").apply { mkdirs() }; val file = File(dir, "test_${System.currentTimeMillis()}.jpg")
-                capture.takePicture(ImageCapture.OutputFileOptions.Builder(file).build(), executor, object : ImageCapture.OnImageSavedCallback {
-                    override fun onImageSaved(r: ImageCapture.OutputFileResults) {
-                        val bitmap = loadOrientedBitmap(file)
-                        val estimate = if (bitmap != null) GaugeNeedleEstimator.estimate(bitmap, gaugeMaxBar, calibration) else GaugeEstimate(null, null, 0.0, "No se pudo analizar la fotografía; confirma la lectura manualmente.")
-                        ContextCompat.getMainExecutor(context).execute { onCaptured(file, estimate) }
+
+            if (captureError != null) {
+                Text(captureError!!, color = Color(0xFFFFB4AB), fontSize = 12.sp)
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        runCatching { providerForCleanup?.unbindAll() }
+                        imageCapture = null
+                        captureError = null
+                        restartKey++
+                    },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                ) { Text("REINTENTAR CÁMARA") }
+                Spacer(Modifier.height(8.dp))
+            }
+
+            Button(
+                onClick = {
+                    val capture = imageCapture ?: run {
+                        captureError = "La cámara todavía no está lista. Espera unos segundos o toca REINTENTAR CÁMARA."
+                        return@Button
                     }
-                    override fun onError(e: ImageCaptureException) { captureError = "Error al tomar fotografía: ${e.message}" }
-                })
-            }, modifier = Modifier.size(72.dp), shape = CircleShape, contentPadding = PaddingValues(0.dp)) { Text("●", fontSize = 30.sp) }
-            captureError?.let { Text(it, color = Color(0xFFFFB4AB), fontSize = 12.sp) }
+                    val dir = File(context.filesDir, "hydor_photos").apply { mkdirs() }
+                    val file = File(dir, "test_${System.currentTimeMillis()}.jpg")
+                    capture.takePicture(
+                        ImageCapture.OutputFileOptions.Builder(file).build(),
+                        executor,
+                        object : ImageCapture.OnImageSavedCallback {
+                            override fun onImageSaved(r: ImageCapture.OutputFileResults) {
+                                val bitmap = loadOrientedBitmap(file)
+                                val estimate = if (bitmap != null) GaugeNeedleEstimator.estimate(bitmap, gaugeMaxBar, calibration)
+                                else GaugeEstimate(null, null, 0.0, "No se pudo analizar la fotografía; confirma la lectura manualmente.")
+                                ContextCompat.getMainExecutor(context).execute { onCaptured(file, estimate) }
+                            }
+
+                            override fun onError(e: ImageCaptureException) {
+                                ContextCompat.getMainExecutor(context).execute {
+                                    captureError = "Error al tomar fotografía. Reintenta la cámara."
+                                }
+                            }
+                        }
+                    )
+                },
+                enabled = imageCapture != null,
+                modifier = Modifier.size(72.dp),
+                shape = CircleShape,
+                contentPadding = PaddingValues(0.dp)
+            ) { Text("●", fontSize = 30.sp) }
+
             TextButton(onClick = onCancel) { Text("Cancelar", color = Color.White) }
         }
     }
@@ -190,25 +257,46 @@ data class GaugeEstimate(val valueBar: Double?, val angleDeg: Double?, val confi
 
 private object GaugeNeedleEstimator {
     fun estimate(bitmap: Bitmap, maxBar: Double, calibration: GaugeCalibration): GaugeEstimate {
-        val scaled = scaleDown(bitmap, 720); val cx = scaled.width / 2.0; val cy = scaled.height / 2.0; val radius = min(scaled.width, scaled.height) * 0.34
+        val scaled = scaleDown(bitmap, 720)
+        val cx = scaled.width / 2.0
+        val cy = scaled.height / 2.0
+        val radius = min(scaled.width, scaled.height) * 0.34
         if (radius < 40) return GaugeEstimate(null, null, 0.0, "Imagen demasiado pequeña para estimar la aguja.")
-        val startDeg = 135.0; val sweepDeg = 270.0; var bestAngle = 0.0; var bestScore = Double.NEGATIVE_INFINITY; var secondScore = Double.NEGATIVE_INFINITY
+        val startDeg = 135.0
+        val sweepDeg = 270.0
+        var bestAngle = 0.0
+        var bestScore = Double.NEGATIVE_INFINITY
+        var secondScore = Double.NEGATIVE_INFINITY
         var angle = startDeg
         while (angle <= startDeg + sweepDeg) {
-            val rad = angle * PI / 180.0; var score = 0.0; var samples = 0; var r = radius * 0.18
+            val rad = angle * PI / 180.0
+            var score = 0.0
+            var samples = 0
+            var r = radius * 0.18
             while (r <= radius * 0.70) {
-                val x = (cx + cos(rad) * r).toInt(); val y = (cy + sin(rad) * r).toInt()
+                val x = (cx + cos(rad) * r).toInt()
+                val y = (cy + sin(rad) * r).toInt()
                 if (x in 0 until scaled.width && y in 0 until scaled.height) {
-                    val pixel = scaled.getPixel(x, y); val rr = (pixel shr 16) and 0xFF; val gg = (pixel shr 8) and 0xFF; val bb = pixel and 0xFF
-                    score += 255.0 - (0.299 * rr + 0.587 * gg + 0.114 * bb); samples++
-                }; r += max(2.0, radius / 90.0)
+                    val pixel = scaled.getPixel(x, y)
+                    val rr = (pixel shr 16) and 0xFF
+                    val gg = (pixel shr 8) and 0xFF
+                    val bb = pixel and 0xFF
+                    score += 255.0 - (0.299 * rr + 0.587 * gg + 0.114 * bb)
+                    samples++
+                }
+                r += max(2.0, radius / 90.0)
             }
             if (samples > 0) score /= samples
-            if (score > bestScore) { secondScore = bestScore; bestScore = score; bestAngle = angle } else if (score > secondScore) secondScore = score
+            if (score > bestScore) {
+                secondScore = bestScore
+                bestScore = score
+                bestAngle = angle
+            } else if (score > secondScore) secondScore = score
             angle += 0.5
         }
         val sameScale = abs(calibration.maxBar - maxBar) < 0.11
-        val value = if (sameScale) calibration.pressureForAngle(bestAngle) else ((bestAngle - startDeg) / sweepDeg).coerceIn(0.0, 1.0) * maxBar
+        val value = if (sameScale) calibration.pressureForAngle(bestAngle)
+        else ((bestAngle - startDeg) / sweepDeg).coerceIn(0.0, 1.0) * maxBar
         val confidence = (0.35 + (bestScore - secondScore).coerceAtLeast(0.0) / 35.0).coerceIn(0.20, 0.92)
         val rounded = kotlin.math.round(value * 100.0) / 100.0
         val note = when {
@@ -219,8 +307,11 @@ private object GaugeNeedleEstimator {
         }
         return GaugeEstimate(rounded, bestAngle, confidence, note)
     }
+
     private fun scaleDown(bitmap: Bitmap, maxSide: Int): Bitmap {
-        val side = max(bitmap.width, bitmap.height); if (side <= maxSide) return bitmap; val factor = maxSide.toFloat() / side.toFloat()
+        val side = max(bitmap.width, bitmap.height)
+        if (side <= maxSide) return bitmap
+        val factor = maxSide.toFloat() / side.toFloat()
         return Bitmap.createScaledBitmap(bitmap, (bitmap.width * factor).toInt(), (bitmap.height * factor).toInt(), true)
     }
 }
@@ -228,7 +319,12 @@ private object GaugeNeedleEstimator {
 private fun loadOrientedBitmap(file: File): Bitmap? {
     val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return null
     val exif = runCatching { ExifInterface(file.absolutePath) }.getOrNull() ?: return bitmap
-    val rotation = when (exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) { ExifInterface.ORIENTATION_ROTATE_90 -> 90f; ExifInterface.ORIENTATION_ROTATE_180 -> 180f; ExifInterface.ORIENTATION_ROTATE_270 -> 270f; else -> 0f }
+    val rotation = when (exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) {
+        ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+        ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+        ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+        else -> 0f
+    }
     if (rotation == 0f) return bitmap
     return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, Matrix().apply { postRotate(rotation) }, true)
 }
