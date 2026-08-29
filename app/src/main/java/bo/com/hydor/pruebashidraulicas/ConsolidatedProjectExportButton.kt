@@ -1,5 +1,6 @@
 package bo.com.hydor.pruebashidraulicas
 
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,6 +30,7 @@ fun ConsolidatedProjectExportButton(projectId: Long) {
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+    var lastSavedUri by remember { mutableStateOf<Uri?>(null) }
 
     suspend fun generateAndWrite(uri: Uri) {
         withContext(Dispatchers.IO) {
@@ -74,6 +76,16 @@ fun ConsolidatedProjectExportButton(projectId: Long) {
         }
     }
 
+    fun openPdf(uri: Uri) {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/pdf")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { context.startActivity(Intent.createChooser(intent, "Abrir informe PDF")) }
+            .onFailure { message = "PDF guardado, pero no se encontró una aplicación para abrirlo." }
+    }
+
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
@@ -81,7 +93,9 @@ fun ConsolidatedProjectExportButton(projectId: Long) {
             message = "Generando y guardando PDF…"
             try {
                 generateAndWrite(uri)
-                message = "PDF guardado correctamente en el dispositivo."
+                lastSavedUri = uri
+                message = "PDF guardado correctamente. Abriendo informe…"
+                openPdf(uri)
             } catch (e: Exception) {
                 message = "No se pudo generar el PDF: ${e.message ?: "error desconocido"}"
             } finally {
@@ -101,6 +115,17 @@ fun ConsolidatedProjectExportButton(projectId: Long) {
         modifier = Modifier.fillMaxWidth().height(54.dp)
     ) {
         Text(if (busy) "GENERANDO PDF…" else "GENERAR / GUARDAR PDF", fontWeight = FontWeight.Bold)
+    }
+
+    lastSavedUri?.let { uri ->
+        Button(
+            onClick = { openPdf(uri) },
+            enabled = !busy,
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF26734D)),
+            modifier = Modifier.fillMaxWidth().height(50.dp)
+        ) {
+            Text("ABRIR ÚLTIMO PDF", fontWeight = FontWeight.Bold)
+        }
     }
 
     message?.let { Text(it) }
