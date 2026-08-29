@@ -10,7 +10,7 @@ object NetworkLayoutStore {
     data class LayoutState(
         val includedSectionIds: Set<Long>,
         val bends: Map<Long, Float>,
-        val nodePoints: Map<String, NodePoint>,
+        val topologyCodes: Map<Long, String>,
         val saved: Boolean,
         val consolidated: Boolean
     )
@@ -19,6 +19,7 @@ object NetworkLayoutStore {
         val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val includedRaw = p.getString("included_$projectId", null)
         val included = includedRaw?.split(',')?.mapNotNull { it.toLongOrNull() }?.toSet() ?: defaultSectionIds
+
         val bendRaw = p.getString("bends_$projectId", "").orEmpty()
         val bends = bendRaw.split(';').mapNotNull { token ->
             val parts = token.split(':')
@@ -28,18 +29,19 @@ object NetworkLayoutStore {
                 if (id != null && bend != null) id to bend else null
             }
         }.toMap()
-        val pointsRaw = p.getString("points_$projectId", "").orEmpty()
-        val nodePoints = pointsRaw.split(';').mapNotNull { token ->
-            val parts = token.split('|')
-            if (parts.size != 3) null else {
-                val x = parts[1].toFloatOrNull(); val y = parts[2].toFloatOrNull()
-                if (x != null && y != null) parts[0] to NodePoint(x, y) else null
-            }
+
+        val topologyRaw = p.getString("topology_$projectId", "").orEmpty()
+        val topology = topologyRaw.split(';').mapNotNull { token ->
+            val parts = token.split(':', limit = 2)
+            val id = parts.getOrNull(0)?.toLongOrNull()
+            val code = parts.getOrNull(1)?.trim().orEmpty()
+            if (id != null && code.isNotEmpty()) id to code else null
         }.toMap()
+
         return LayoutState(
             includedSectionIds = included,
             bends = bends,
-            nodePoints = nodePoints,
+            topologyCodes = topology,
             saved = p.getBoolean("saved_$projectId", false),
             consolidated = p.getBoolean("consolidated_$projectId", false)
         )
@@ -50,12 +52,12 @@ object NetworkLayoutStore {
         projectId: Long,
         included: Set<Long>,
         bends: Map<Long, Float>,
-        nodePoints: Map<String, NodePoint>
+        topologyCodes: Map<Long, String>
     ) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString("included_$projectId", included.sorted().joinToString(","))
             .putString("bends_$projectId", bends.entries.sortedBy { it.key }.joinToString(";") { "${it.key}:${it.value}" })
-            .putString("points_$projectId", nodePoints.entries.sortedBy { it.key }.joinToString(";") { "${it.key}|${it.value.x}|${it.value.y}" })
+            .putString("topology_$projectId", topologyCodes.entries.sortedBy { it.key }.joinToString(";") { "${it.key}:${it.value.trim().lowercase()}" })
             .putBoolean("saved_$projectId", true)
             .apply()
     }
