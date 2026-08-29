@@ -74,7 +74,7 @@ fun HydorApp() {
                 composable(Routes.DASHBOARD) { Dashboard(navController) }
                 composable(Routes.NEW_TEST) { NewHydraulicTestScreen(navController) }
                 composable(Routes.PROJECTS) { ProjectNetworkScreen { navController.popBackStack() } }
-                composable(Routes.REPORTS) { ReportsScreen(navController) }
+                composable(Routes.REPORTS) { ConsolidatedReportsScreen(navController) }
                 composable(Routes.CALIBRATION) { GaugeCalibrationScreen { navController.popBackStack() } }
                 composable(Routes.TEST_READY, arguments = listOf(navArgument("testId") { type = NavType.LongType })) { entry ->
                     TestReadyScreen(navController, entry.arguments?.getLong("testId") ?: 0L)
@@ -160,7 +160,7 @@ private fun Dashboard(navController: NavHostController) {
             }
         }
         HomeAction("Proyectos y tramos", "Vista gráfica de la red y estado de cada tramo") { navController.navigate(Routes.PROJECTS) }
-        HomeAction("Informes y resultados", "Resultados vinculados a cada proyecto y tramo") { navController.navigate(Routes.REPORTS) }
+        HomeAction("Informes y resultados", "Solo proyectos consolidados, con fecha y PDF final") { navController.navigate(Routes.REPORTS) }
     }
 }
 
