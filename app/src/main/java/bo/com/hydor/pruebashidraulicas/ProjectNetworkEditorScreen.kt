@@ -186,7 +186,16 @@ fun ProjectNetworkEditorScreen(projectId: Long, onBack: () -> Unit, onGoReports:
                 modifier = Modifier.fillMaxWidth().height(54.dp)
             ) { Text(if (consolidated) "CONSOLIDADO EN INFORMES" else "CONSOLIDAR INFORME", fontWeight = FontWeight.Bold) }
 
-            if (consolidated) OutlinedButton(onClick = onGoReports, modifier = Modifier.fillMaxWidth()) { Text("VER EN INFORMES Y RESULTADOS") }
+            if (consolidated) {
+                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFEAF2F8)), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("INFORME FINAL", fontWeight = FontWeight.ExtraBold, color = EditorBlue)
+                        Text("Incluye proyecto, red consolidada, resumen de tramos, presiones, tiempos, lecturas, gráficas, evidencias fotográficas y conclusión técnica.", fontSize = 11.sp)
+                        FinalReportExportButton(projectId = projectId, enabled = validation.valid)
+                    }
+                }
+                OutlinedButton(onClick = onGoReports, modifier = Modifier.fillMaxWidth()) { Text("VER EN INFORMES Y RESULTADOS") }
+            }
         }
         TextButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Volver") }
     }
