@@ -12,7 +12,7 @@ import androidx.room.RoomDatabase
         HydraulicTestEntity::class,
         PressureReadingEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = true
 )
 abstract class HydorDatabase : RoomDatabase() {
@@ -27,7 +27,10 @@ abstract class HydorDatabase : RoomDatabase() {
                     context.applicationContext,
                     HydorDatabase::class.java,
                     "hydor_field.db"
-                ).build().also { INSTANCE = it }
+                )
+                    .fallbackToDestructiveMigration()
+                    .build()
+                    .also { INSTANCE = it }
             }
     }
 }
