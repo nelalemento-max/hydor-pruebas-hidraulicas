@@ -177,7 +177,7 @@ private fun NewHydraulicTestScreen(navController: NavHostController) {
     var error by remember { mutableStateOf<String?>(null) }
 
     val valid = project.isNotBlank() && neighborhood.isNotBlank() && startPoint.isNotBlank() && endPoint.isNotBlank() &&
-        diameter.toIntOrNull() != null && length.toDoubleOrNull() != null &&
+        diameter.isNotBlank() && length.toDoubleOrNull() != null &&
         nominalPressure.toDoubleOrNull() != null && targetPressure.toDoubleOrNull() != null &&
         maxDrop.toDoubleOrNull() != null && durationHours.toDoubleOrNull() != null
 
@@ -193,7 +193,7 @@ private fun NewHydraulicTestScreen(navController: NavHostController) {
         SectionTitle("Tramo sometido a prueba", "Los puntos pueden ser tee, válvula, nodo, tapón u otra referencia del plano.")
         HelpField("Punto inicial del tramo", startPoint, "Ej.: T-35, V-02 o Nodo N-14") { startPoint = it }
         HelpField("Punto final del tramo", endPoint, "Ej.: T-34, V-03 o Nodo N-15") { endPoint = it }
-        HelpField("Diámetro de tubería (mm)", diameter, "Ej.: 110") { diameter = it }
+        HelpField("Diámetro de tubería (pulgadas \" )", diameter, "Ej.: 2, 4, 6, 8 o 1 1/2") { diameter = it }
         HelpField("Longitud del tramo (m)", length, "Ej.: 300.00") { length = it }
 
         SectionTitle("Criterio técnico", "El límite de aceptación debe provenir de la especificación técnica de la obra.")
@@ -222,7 +222,7 @@ private fun NewHydraulicTestScreen(navController: NavHostController) {
                                 neighborhood = neighborhood.trim(),
                                 startValve = startPoint.trim(),
                                 endValve = endPoint.trim(),
-                                diameterMm = diameter.toInt(),
+                                diameterInches = diameter.trim(),
                                 lengthMeters = length.toDouble()
                             )
                         )
@@ -336,7 +336,7 @@ private fun TechnicalSummary(project: ProjectEntity?, section: SectionEntity, te
             if (section.battery.isNotBlank()) Text("Grupo: ${section.battery}")
             Text("Ubicación: ${section.neighborhood}")
             Text("Tramo: ${section.startValve} → ${section.endValve}")
-            Text("${formatNumber(section.lengthMeters)} m · Ø ${section.diameterMm} mm")
+            Text("${formatNumber(section.lengthMeters)} m · Ø ${formatDiameter(section.diameterInches)}")
             Divider()
             Text("Nominal: ${formatNumber(test.nominalPressureBar)} bar")
             Text("Ensayo: ${formatNumber(test.targetPressureBar)} bar")
@@ -421,7 +421,7 @@ private fun ActiveTestScreen(navController: NavHostController, testId: Long) {
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Text("Ensayo en curso", fontSize = 25.sp, fontWeight = FontWeight.Bold, color = HydorBlue)
-        section?.let { Text("${it.startValve} → ${it.endValve} · ${formatNumber(it.lengthMeters)} m · Ø ${it.diameterMm} mm") }
+        section?.let { Text("${it.startValve} → ${it.endValve} · ${formatNumber(it.lengthMeters)} m · Ø ${formatDiameter(it.diameterInches)}") }
 
         EvaluationCard(evaluation, currentTest?.maxAllowedDropBar ?: 0.0)
 
@@ -554,6 +554,16 @@ private fun PressureChart(readings: List<PressureReadingEntity>, allowedDrop: Do
                         yMax += pad
                     }
 
+                    val gridColor = Color(0xFFDDE4EA).copy(alpha = 0.70f)
+                    for (i in 0..5) {
+                        val y = top + (height / 5f) * i
+                        drawLine(gridColor, Offset(left, y), Offset(right, y), strokeWidth = 1f)
+                    }
+                    for (i in 0..6) {
+                        val x = left + (width / 6f) * i
+                        drawLine(gridColor, Offset(x, top), Offset(x, bottom), strokeWidth = 1f)
+                    }
+
                     drawLine(Color(0xFFB8C0C8), Offset(left, bottom), Offset(right, bottom), strokeWidth = 2f)
                     drawLine(Color(0xFFB8C0C8), Offset(left, top), Offset(left, bottom), strokeWidth = 2f)
 
@@ -636,7 +646,7 @@ private fun ProjectsScreen(navController: NavHostController) {
                         (sections[project.id] ?: emptyList()).forEach { section ->
                             Divider()
                             Text("${section.startValve} → ${section.endValve}", fontWeight = FontWeight.Bold)
-                            Text("${section.neighborhood} · ${formatNumber(section.lengthMeters)} m · Ø ${section.diameterMm} mm")
+                            Text("${section.neighborhood} · ${formatNumber(section.lengthMeters)} m · Ø ${formatDiameter(section.diameterInches)}")
                         }
                     }
                 }
@@ -675,7 +685,7 @@ private fun ReportsScreen(navController: NavHostController) {
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(section?.let { "${it.startValve} → ${it.endValve}" } ?: "Prueba #${test.id}", fontWeight = FontWeight.Bold, color = HydorBlue)
-                        Text(section?.let { "${formatNumber(it.lengthMeters)} m · Ø ${it.diameterMm} mm" } ?: "")
+                        Text(section?.let { "${formatNumber(it.lengthMeters)} m · Ø ${formatDiameter(it.diameterInches)}" } ?: "")
                         Text(
                             when (test.status) {
                                 "PASSED" -> "ACEPTABLE"
@@ -707,6 +717,11 @@ private fun formatClock(milliseconds: Long): String {
 private fun formatElapsed(milliseconds: Long): String {
     val totalMinutes = milliseconds.coerceAtLeast(0L) / 60_000L
     return if (totalMinutes < 60) "${totalMinutes} min" else "${totalMinutes / 60} h ${totalMinutes % 60} min"
+}
+
+private fun formatDiameter(value: String): String {
+    val clean = value.trim()
+    return if (clean.endsWith("\"")) clean else "$clean\""
 }
 
 private fun formatNumber(value: Double): String = String.format(Locale.US, "%.2f", value)
