@@ -23,7 +23,9 @@ import bo.com.hydor.pruebashidraulicas.data.HydorDatabase
 import bo.com.hydor.pruebashidraulicas.data.HydraulicTestEntity
 import bo.com.hydor.pruebashidraulicas.data.ProjectEntity
 import bo.com.hydor.pruebashidraulicas.data.SectionEntity
+import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 
 private val EditorBlue = Color(0xFF123A63)
 private val EditorGreen = Color(0xFF26734D)
@@ -69,20 +71,12 @@ fun ProjectNetworkEditorScreen(projectId: Long, onBack: () -> Unit, onGoReports:
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(project?.name ?: "Proyecto", fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = EditorBlue)
-        Text(
-            "HYDOR arma la red automáticamente usando códigos simples. Es más rápido y estable que arrastrar tubos con el dedo.",
-            fontSize = 12.sp
-        )
+        Text("HYDOR arma la red automáticamente de arriba hacia abajo usando códigos simples.", fontSize = 12.sp)
 
         if (sections.isEmpty()) {
             Text("Este proyecto todavía no tiene tramos registrados.")
         } else {
-            AutoNetworkDiagram(
-                sections = selectedSections,
-                testsBySection = testsBySection,
-                topology = topology,
-                bends = bends
-            )
+            AutoNetworkDiagram(selectedSections, testsBySection, topology, bends)
 
             Card(colors = CardDefaults.cardColors(containerColor = if (validation.valid) EditorGreen.copy(alpha = 0.10f) else EditorAmber.copy(alpha = 0.10f))) {
                 Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -95,7 +89,7 @@ fun ProjectNetworkEditorScreen(projectId: Long, onBack: () -> Unit, onGoReports:
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Cómo numerar", fontWeight = FontWeight.Bold, color = EditorBlue)
                     Text("1 = primer tramo", fontSize = 11.sp)
-                    Text("2 = continúa después del 1 · 3 = continúa después del 2", fontSize = 11.sp)
+                    Text("2 = continúa debajo del 1 · 3 = continúa debajo del 2", fontSize = 11.sp)
                     Text("1a = ramificación izquierda desde el final del 1", fontSize = 11.sp)
                     Text("1b = ramificación derecha desde el final del 1", fontSize = 11.sp)
                     Text("2a / 2b = ramificaciones desde el final del 2, y así sucesivamente.", fontSize = 11.sp)
@@ -156,9 +150,9 @@ fun ProjectNetworkEditorScreen(projectId: Long, onBack: () -> Unit, onGoReports:
                                 valueRange = -1f..1f
                             )
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Arriba", fontSize = 10.sp, color = Color.Gray)
+                                Text("Curvar izquierda", fontSize = 10.sp, color = Color.Gray)
                                 Text("Recto", fontSize = 10.sp, color = Color.Gray)
-                                Text("Abajo", fontSize = 10.sp, color = Color.Gray)
+                                Text("Curvar derecha", fontSize = 10.sp, color = Color.Gray)
                             }
                         }
                     }
@@ -192,9 +186,7 @@ fun ProjectNetworkEditorScreen(projectId: Long, onBack: () -> Unit, onGoReports:
                 modifier = Modifier.fillMaxWidth().height(54.dp)
             ) { Text(if (consolidated) "CONSOLIDADO EN INFORMES" else "CONSOLIDAR INFORME", fontWeight = FontWeight.Bold) }
 
-            if (consolidated) {
-                OutlinedButton(onClick = onGoReports, modifier = Modifier.fillMaxWidth()) { Text("VER EN INFORMES Y RESULTADOS") }
-            }
+            if (consolidated) OutlinedButton(onClick = onGoReports, modifier = Modifier.fillMaxWidth()) { Text("VER EN INFORMES Y RESULTADOS") }
         }
         TextButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Volver") }
     }
@@ -208,18 +200,13 @@ private fun validateTopology(sections: List<SectionEntity>, topology: Map<Long, 
     if (codes.any { it.isBlank() }) return TopologyValidation(false, "Asigna un número o ramificación a cada tramo seleccionado.")
     if (codes.size != codes.toSet().size) return TopologyValidation(false, "Hay posiciones repetidas. Cada tramo debe tener un código distinto.")
     if ("1" !in codes) return TopologyValidation(false, "La red debe comenzar con el tramo 1.")
-
     val regex = Regex("^(\\d+)([ab])?$")
     for (code in codes) {
         val match = regex.matchEntire(code) ?: return TopologyValidation(false, "Código no válido: $code")
         val base = match.groupValues[1].toIntOrNull() ?: return TopologyValidation(false, "Código no válido: $code")
         val branch = match.groupValues[2]
-        if (branch.isEmpty() && base > 1 && "${base - 1}" !in codes) {
-            return TopologyValidation(false, "Para usar $code primero debe existir el tramo ${base - 1}.")
-        }
-        if (branch.isNotEmpty() && "$base" !in codes) {
-            return TopologyValidation(false, "$code necesita que exista primero el tramo principal $base.")
-        }
+        if (branch.isEmpty() && base > 1 && "${base - 1}" !in codes) return TopologyValidation(false, "Para usar $code primero debe existir el tramo ${base - 1}.")
+        if (branch.isNotEmpty() && "$base" !in codes) return TopologyValidation(false, "$code necesita que exista primero el tramo principal $base.")
     }
     return TopologyValidation(true, "Todos los tramos seleccionados están relacionados. HYDOR puede construir y guardar la red.")
 }
@@ -230,32 +217,28 @@ private fun buildAutoGeometry(sections: List<SectionEntity>, topology: Map<Long,
     val byCode = sections.associateBy { topology[it.id].orEmpty().trim().lowercase() }
     val maxLength = sections.maxOfOrNull { it.lengthMeters }?.coerceAtLeast(1.0) ?: 1.0
     val result = mutableMapOf<Long, PipeGeometry>()
-
-    fun visualLength(section: SectionEntity): Float = 150f + 250f * (section.lengthMeters / maxLength).toFloat().coerceIn(0.0f, 1.0f)
+    fun visualLength(section: SectionEntity): Float = 145f + 230f * (section.lengthMeters / maxLength).toFloat().coerceIn(0f, 1f)
 
     val numericCodes = byCode.keys.filter { it.matches(Regex("^\\d+$")) }.sortedBy { it.toInt() }
-    var cursor = Offset(90f, 230f)
+    var cursor = Offset(430f, 70f)
     numericCodes.forEach { code ->
         val section = byCode[code] ?: return@forEach
         val len = visualLength(section)
-        val end = Offset(cursor.x + len, cursor.y)
+        val end = Offset(cursor.x, cursor.y + len)
         result[section.id] = PipeGeometry(cursor, end)
         cursor = end
     }
 
     byCode.forEach { (code, section) ->
         val m = Regex("^(\\d+)([ab])$").matchEntire(code) ?: return@forEach
-        val baseCode = m.groupValues[1]
-        val side = m.groupValues[2]
-        val parent = byCode[baseCode] ?: return@forEach
+        val parent = byCode[m.groupValues[1]] ?: return@forEach
         val parentGeometry = result[parent.id] ?: return@forEach
         val len = visualLength(section)
-        val direction = if (side == "a") -1f else 1f
+        val side = if (m.groupValues[2] == "a") -1f else 1f
         val start = parentGeometry.end
-        val end = Offset(start.x + len * 0.72f, start.y + direction * max(130f, len * 0.48f))
+        val end = Offset(start.x + side * max(150f, len * 0.55f), start.y + len * 0.72f)
         result[section.id] = PipeGeometry(start, end)
     }
-
     return result
 }
 
@@ -267,13 +250,16 @@ private fun AutoNetworkDiagram(
     bends: Map<Long, Float>
 ) {
     val geometry = remember(sections, topology) { buildAutoGeometry(sections, topology) }
-    val canvasWidth = max(1000, ((geometry.values.maxOfOrNull { max(it.start.x, it.end.x) } ?: 800f) + 180f).toInt()).dp
-    val canvasHeight = 620.dp
+    val minX = geometry.values.minOfOrNull { min(it.start.x, it.end.x) } ?: 0f
+    val maxX = geometry.values.maxOfOrNull { max(it.start.x, it.end.x) } ?: 860f
+    val maxY = geometry.values.maxOfOrNull { max(it.start.y, it.end.y) } ?: 600f
+    val canvasWidth = max(900, (maxX - minX + 260f).toInt()).dp
+    val canvasHeight = max(620, (maxY + 150f).toInt()).dp
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("VISTA AUTOMÁTICA DE LA RED", fontWeight = FontWeight.ExtraBold, color = EditorBlue)
-            Text("La escala es relativa: los tramos más largos se dibujan más largos. Las ramificaciones nacen automáticamente del tramo base.", fontSize = 10.sp, color = Color.Gray)
+            Text("La red principal se lee de arriba hacia abajo; las ramificaciones salen a izquierda y derecha. La longitud visual mantiene una escala relativa.", fontSize = 10.sp, color = Color.Gray)
             Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                 Canvas(Modifier.width(canvasWidth).height(canvasHeight).background(EditorBackground, RoundedCornerShape(12.dp))) {
                     val grid = Color(0xFFDDE4EA).copy(alpha = 0.60f)
@@ -282,10 +268,18 @@ private fun AutoNetworkDiagram(
                     var gy = 0f
                     while (gy < size.height) { drawLine(grid, Offset(0f, gy), Offset(size.width, gy), 1f); gy += 50f }
 
+                    val xShift = if (minX < 70f) 70f - minX else 0f
                     sections.forEach { section ->
-                        val g = geometry[section.id] ?: return@forEach
+                        val raw = geometry[section.id] ?: return@forEach
+                        val start = Offset(raw.start.x + xShift, raw.start.y)
+                        val end = Offset(raw.end.x + xShift, raw.end.y)
                         val bend = bends[section.id] ?: 0f
-                        val control = Offset((g.start.x + g.end.x) / 2f, (g.start.y + g.end.y) / 2f + bend * 90f)
+                        val dx = end.x - start.x
+                        val dy = end.y - start.y
+                        val len = hypot(dx.toDouble(), dy.toDouble()).toFloat().coerceAtLeast(1f)
+                        val nx = -dy / len
+                        val ny = dx / len
+                        val control = Offset((start.x + end.x) / 2f + nx * bend * 90f, (start.y + end.y) / 2f + ny * bend * 90f)
                         val pipeColor = when (testsBySection[section.id]?.status) {
                             "PASSED" -> EditorGreen
                             "REVIEW" -> EditorRed
@@ -293,20 +287,18 @@ private fun AutoNetworkDiagram(
                             "READY" -> EditorBlue
                             else -> EditorGray
                         }
-                        val path = Path().apply { moveTo(g.start.x, g.start.y); quadraticBezierTo(control.x, control.y, g.end.x, g.end.y) }
+                        val path = Path().apply { moveTo(start.x, start.y); quadraticBezierTo(control.x, control.y, end.x, end.y) }
                         drawPath(path, Color(0xFFD5DCE3), style = androidx.compose.ui.graphics.drawscope.Stroke(22f))
                         drawPath(path, pipeColor, style = androidx.compose.ui.graphics.drawscope.Stroke(12f))
-                        drawCircle(Color.White, 17f, g.start)
-                        drawCircle(EditorBlue, 11f, g.start)
-                        drawCircle(Color.White, 17f, g.end)
-                        drawCircle(EditorBlue, 11f, g.end)
+                        drawCircle(Color.White, 17f, start); drawCircle(EditorBlue, 11f, start)
+                        drawCircle(Color.White, 17f, end); drawCircle(EditorBlue, 11f, end)
 
                         val code = topology[section.id].orEmpty().uppercase()
-                        val mid = Offset((g.start.x + g.end.x) / 2f, (g.start.y + g.end.y) / 2f)
+                        val mid = Offset((start.x + end.x) / 2f, (start.y + end.y) / 2f)
                         drawContext.canvas.nativeCanvas.drawText(
                             "$code · ${section.startValve}→${section.endValve} · ${section.lengthMeters.toInt()} m · Ø ${section.diameterInches}\"",
-                            mid.x - 70f,
-                            mid.y - 18f,
+                            mid.x + 16f,
+                            mid.y,
                             Paint().apply { isAntiAlias = true; textSize = 21f; this.color = android.graphics.Color.rgb(55, 67, 78) }
                         )
                     }
