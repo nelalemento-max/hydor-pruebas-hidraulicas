@@ -12,7 +12,7 @@ import androidx.room.RoomDatabase
         HydraulicTestEntity::class,
         PressureReadingEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 abstract class HydorDatabase : RoomDatabase() {
