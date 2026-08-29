@@ -5,6 +5,8 @@
     <application
         android:allowBackup="true"
         android:label="PBC Laboratorio Bolivia"
+        android:icon="@drawable/pbc_logo"
+        android:roundIcon="@drawable/pbc_logo"
         android:supportsRtl="true"
         android:theme="@style/Theme.Hydor">
         <activity android:name=".MainActivity" android:exported="true">
