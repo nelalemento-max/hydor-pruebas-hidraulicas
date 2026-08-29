@@ -32,6 +32,7 @@ data class HydraulicTestEntity(
     val nominalPressureBar: Double,
     val targetPressureBar: Double,
     val maxAllowedDropBar: Double,
+    val gaugeMaxBar: Double,
     val durationMinutes: Int,
     val startedAt: Long,
     val finishedAt: Long? = null,
