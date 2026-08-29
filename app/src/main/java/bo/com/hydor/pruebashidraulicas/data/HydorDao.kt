@@ -31,6 +31,9 @@ interface HydorDao {
     @Query("SELECT * FROM tests WHERE id = :testId LIMIT 1")
     suspend fun getTest(testId: Long): HydraulicTestEntity?
 
+    @Query("SELECT * FROM tests WHERE status = 'IN_PROGRESS' ORDER BY startedAt DESC LIMIT 1")
+    suspend fun getActiveTest(): HydraulicTestEntity?
+
     @Query("SELECT * FROM sections WHERE id = :sectionId LIMIT 1")
     suspend fun getSection(sectionId: Long): SectionEntity?
 
