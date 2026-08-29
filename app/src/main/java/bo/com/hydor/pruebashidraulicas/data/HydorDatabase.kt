@@ -16,6 +16,8 @@ import androidx.room.RoomDatabase
     exportSchema = true
 )
 abstract class HydorDatabase : RoomDatabase() {
+    abstract fun hydorDao(): HydorDao
+
     companion object {
         @Volatile private var INSTANCE: HydorDatabase? = null
 
