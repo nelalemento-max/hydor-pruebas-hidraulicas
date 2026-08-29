@@ -17,6 +17,15 @@ android {
         versionName = "0.1.0"
     }
 
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+
+    kotlinOptions {
+        jvmTarget = "21"
+    }
+
     buildFeatures { compose = true }
 
     packaging {
@@ -24,9 +33,10 @@ android {
     }
 }
 
-// Android Studio/Gradle 9 sync compatibility workaround.
-// Some IDE tooling creates *ClasspathCopy configurations as both resolvable
-// and consumable; Gradle 9 rejects that. These copies are resolution-only.
+kotlin {
+    jvmToolchain(21)
+}
+
 configurations.configureEach {
     if (name.endsWith("ClasspathCopy")) {
         isCanBeConsumed = false
