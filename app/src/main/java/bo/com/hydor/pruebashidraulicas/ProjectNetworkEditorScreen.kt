@@ -3,7 +3,6 @@ package bo.com.hydor.pruebashidraulicas
 import android.graphics.Paint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -17,7 +16,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -25,7 +23,6 @@ import bo.com.hydor.pruebashidraulicas.data.HydorDatabase
 import bo.com.hydor.pruebashidraulicas.data.HydraulicTestEntity
 import bo.com.hydor.pruebashidraulicas.data.ProjectEntity
 import bo.com.hydor.pruebashidraulicas.data.SectionEntity
-import kotlin.math.hypot
 import kotlin.math.max
 
 private val EditorBlue = Color(0xFF123A63)
@@ -34,9 +31,6 @@ private val EditorAmber = Color(0xFFA96400)
 private val EditorRed = Color(0xFFB3261E)
 private val EditorGray = Color(0xFF8A949E)
 private val EditorBackground = Color(0xFFF7F9FB)
-
-private const val SNAP_DISTANCE = 48f
-private const val ENDPOINT_RADIUS = 22f
 
 @Composable
 fun ProjectNetworkEditorScreen(projectId: Long, onBack: () -> Unit, onGoReports: () -> Unit) {
@@ -47,7 +41,7 @@ fun ProjectNetworkEditorScreen(projectId: Long, onBack: () -> Unit, onGoReports:
     var testsBySection by remember { mutableStateOf<Map<Long, HydraulicTestEntity>>(emptyMap()) }
     var included by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var bends by remember { mutableStateOf<Map<Long, Float>>(emptyMap()) }
-    var nodePoints by remember { mutableStateOf<Map<String, NetworkLayoutStore.NodePoint>>(emptyMap()) }
+    var topology by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
     var saved by remember { mutableStateOf(false) }
     var consolidated by remember { mutableStateOf(false) }
     var showCurveControls by remember { mutableStateOf(false) }
@@ -62,46 +56,49 @@ fun ProjectNetworkEditorScreen(projectId: Long, onBack: () -> Unit, onGoReports:
         val state = NetworkLayoutStore.load(context, projectId, sections.map { it.id }.toSet())
         included = state.includedSectionIds
         bends = state.bends
-        nodePoints = state.nodePoints
+        topology = state.topologyCodes
         saved = state.saved
         consolidated = state.consolidated
     }
 
     val selectedSections = sections.filter { it.id in included }
-    val connected = remember(selectedSections, nodePoints) { networkIsConnected(selectedSections, nodePoints) }
+    val validation = remember(selectedSections, topology) { validateTopology(selectedSections, topology) }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(project?.name ?: "Proyecto", fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = EditorBlue)
-        Text("Selecciona los tramos y arma manualmente la red. Arrastra los círculos de las puntas: cuando dos extremos se acercan, HYDOR los une automáticamente.", fontSize = 12.sp)
+        Text(
+            "HYDOR arma la red automáticamente usando códigos simples. Es más rápido y estable que arrastrar tubos con el dedo.",
+            fontSize = 12.sp
+        )
 
         if (sections.isEmpty()) {
             Text("Este proyecto todavía no tiene tramos registrados.")
         } else {
-            InteractiveNetworkDiagram(
+            AutoNetworkDiagram(
                 sections = selectedSections,
                 testsBySection = testsBySection,
-                bends = bends,
-                storedPoints = nodePoints,
-                onPointsChanged = { points ->
-                    nodePoints = points
-                    saved = false
-                    consolidated = false
-                }
+                topology = topology,
+                bends = bends
             )
 
-            Card(
-                colors = CardDefaults.cardColors(containerColor = if (connected) EditorGreen.copy(alpha = 0.10f) else EditorAmber.copy(alpha = 0.10f))
-            ) {
-                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (connected) "✓" else "⚠", fontSize = 22.sp, color = if (connected) EditorGreen else EditorAmber)
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text(if (connected) "RED COMPLETAMENTE UNIDA" else "FALTAN TUBOS POR UNIR", fontWeight = FontWeight.ExtraBold, color = if (connected) EditorGreen else EditorAmber)
-                        Text(if (connected) "Ya puedes guardar o consolidar." else "Une todos los tramos seleccionados en una sola red antes de guardar.", fontSize = 11.sp)
-                    }
+            Card(colors = CardDefaults.cardColors(containerColor = if (validation.valid) EditorGreen.copy(alpha = 0.10f) else EditorAmber.copy(alpha = 0.10f))) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(if (validation.valid) "✓ RED COMPLETA" else "⚠ FALTA DEFINIR LA RED", fontWeight = FontWeight.ExtraBold, color = if (validation.valid) EditorGreen else EditorAmber)
+                    Text(validation.message, fontSize = 11.sp)
+                }
+            }
+
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFEAF2F8))) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Cómo numerar", fontWeight = FontWeight.Bold, color = EditorBlue)
+                    Text("1 = primer tramo", fontSize = 11.sp)
+                    Text("2 = continúa después del 1 · 3 = continúa después del 2", fontSize = 11.sp)
+                    Text("1a = ramificación izquierda desde el final del 1", fontSize = 11.sp)
+                    Text("1b = ramificación derecha desde el final del 1", fontSize = 11.sp)
+                    Text("2a / 2b = ramificaciones desde el final del 2, y así sucesivamente.", fontSize = 11.sp)
                 }
             }
 
@@ -114,12 +111,13 @@ fun ProjectNetworkEditorScreen(projectId: Long, onBack: () -> Unit, onGoReports:
 
             sections.forEach { section ->
                 OutlinedCard(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(
                                 checked = section.id in included,
                                 onCheckedChange = { checked ->
                                     included = if (checked) included + section.id else included - section.id
+                                    if (!checked) topology = topology - section.id
                                     saved = false
                                     consolidated = false
                                 }
@@ -129,8 +127,25 @@ fun ProjectNetworkEditorScreen(projectId: Long, onBack: () -> Unit, onGoReports:
                                 Text("${section.lengthMeters.toInt()} m · Ø ${section.diameterInches}\" · ${section.neighborhood}", fontSize = 12.sp)
                             }
                         }
+
+                        if (section.id in included) {
+                            OutlinedTextField(
+                                value = topology[section.id].orEmpty(),
+                                onValueChange = { raw ->
+                                    val clean = raw.lowercase().filter { it.isDigit() || it == 'a' || it == 'b' }.take(4)
+                                    topology = topology + (section.id to clean)
+                                    saved = false
+                                    consolidated = false
+                                },
+                                label = { Text("Posición en la red") },
+                                supportingText = { Text("Ej.: 1, 2, 3, 1a, 1b, 2a...") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
                         if (showCurveControls && section.id in included) {
-                            Text("Curvatura del tubo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text("Curvatura opcional", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             Slider(
                                 value = bends[section.id] ?: 0f,
                                 onValueChange = { value ->
@@ -141,9 +156,9 @@ fun ProjectNetworkEditorScreen(projectId: Long, onBack: () -> Unit, onGoReports:
                                 valueRange = -1f..1f
                             )
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Curva arriba", fontSize = 10.sp, color = Color.Gray)
+                                Text("Arriba", fontSize = 10.sp, color = Color.Gray)
                                 Text("Recto", fontSize = 10.sp, color = Color.Gray)
-                                Text("Curva abajo", fontSize = 10.sp, color = Color.Gray)
+                                Text("Abajo", fontSize = 10.sp, color = Color.Gray)
                             }
                         }
                     }
@@ -152,27 +167,27 @@ fun ProjectNetworkEditorScreen(projectId: Long, onBack: () -> Unit, onGoReports:
 
             Button(
                 onClick = {
-                    NetworkLayoutStore.saveLayout(context, projectId, included, bends, nodePoints)
+                    NetworkLayoutStore.saveLayout(context, projectId, included, bends, topology)
                     saved = true
                     consolidated = false
                     NetworkLayoutStore.setConsolidated(context, projectId, false)
                 },
-                enabled = included.isNotEmpty() && connected,
+                enabled = included.isNotEmpty() && validation.valid,
                 modifier = Modifier.fillMaxWidth().height(54.dp)
             ) { Text(if (saved) "GRÁFICO GUARDADO" else "GUARDAR GRÁFICO", fontWeight = FontWeight.Bold) }
 
-            if (!connected && included.isNotEmpty()) {
-                Text("Guardar está bloqueado hasta que todos los tubos seleccionados estén conectados entre sí.", color = EditorRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            if (!validation.valid && included.isNotEmpty()) {
+                Text("Guardar está bloqueado hasta que todos los tramos seleccionados tengan una posición válida y formen una sola red.", color = EditorRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
 
             Button(
                 onClick = {
-                    NetworkLayoutStore.saveLayout(context, projectId, included, bends, nodePoints)
+                    NetworkLayoutStore.saveLayout(context, projectId, included, bends, topology)
                     NetworkLayoutStore.setConsolidated(context, projectId, true)
                     saved = true
                     consolidated = true
                 },
-                enabled = included.isNotEmpty() && connected,
+                enabled = included.isNotEmpty() && validation.valid,
                 colors = ButtonDefaults.buttonColors(containerColor = EditorGreen),
                 modifier = Modifier.fillMaxWidth().height(54.dp)
             ) { Text(if (consolidated) "CONSOLIDADO EN INFORMES" else "CONSOLIDAR INFORME", fontWeight = FontWeight.Bold) }
@@ -185,112 +200,92 @@ fun ProjectNetworkEditorScreen(projectId: Long, onBack: () -> Unit, onGoReports:
     }
 }
 
-private fun startKey(section: SectionEntity) = "${section.id}:S"
-private fun endKey(section: SectionEntity) = "${section.id}:E"
+private data class TopologyValidation(val valid: Boolean, val message: String)
 
-private fun defaultPoints(sections: List<SectionEntity>): Map<String, NetworkLayoutStore.NodePoint> {
-    if (sections.isEmpty()) return emptyMap()
-    val maxLength = sections.maxOfOrNull { it.lengthMeters }?.coerceAtLeast(1.0) ?: 1.0
-    val result = mutableMapOf<String, NetworkLayoutStore.NodePoint>()
-    sections.forEachIndexed { index, section ->
-        val row = index % 5
-        val column = index / 5
-        val y = 90f + row * 120f
-        val x = 90f + column * 520f
-        val visualLength = (150f + 270f * (section.lengthMeters / maxLength).toFloat().coerceIn(0f, 1f))
-        result[startKey(section)] = NetworkLayoutStore.NodePoint(x, y)
-        result[endKey(section)] = NetworkLayoutStore.NodePoint(x + visualLength, y)
+private fun validateTopology(sections: List<SectionEntity>, topology: Map<Long, String>): TopologyValidation {
+    if (sections.isEmpty()) return TopologyValidation(false, "Selecciona al menos un tramo.")
+    val codes = sections.map { topology[it.id].orEmpty().trim().lowercase() }
+    if (codes.any { it.isBlank() }) return TopologyValidation(false, "Asigna un número o ramificación a cada tramo seleccionado.")
+    if (codes.size != codes.toSet().size) return TopologyValidation(false, "Hay posiciones repetidas. Cada tramo debe tener un código distinto.")
+    if ("1" !in codes) return TopologyValidation(false, "La red debe comenzar con el tramo 1.")
+
+    val regex = Regex("^(\\d+)([ab])?$")
+    for (code in codes) {
+        val match = regex.matchEntire(code) ?: return TopologyValidation(false, "Código no válido: $code")
+        val base = match.groupValues[1].toIntOrNull() ?: return TopologyValidation(false, "Código no válido: $code")
+        val branch = match.groupValues[2]
+        if (branch.isEmpty() && base > 1 && "${base - 1}" !in codes) {
+            return TopologyValidation(false, "Para usar $code primero debe existir el tramo ${base - 1}.")
+        }
+        if (branch.isNotEmpty() && "$base" !in codes) {
+            return TopologyValidation(false, "$code necesita que exista primero el tramo principal $base.")
+        }
     }
+    return TopologyValidation(true, "Todos los tramos seleccionados están relacionados. HYDOR puede construir y guardar la red.")
+}
+
+private data class PipeGeometry(val start: Offset, val end: Offset)
+
+private fun buildAutoGeometry(sections: List<SectionEntity>, topology: Map<Long, String>): Map<Long, PipeGeometry> {
+    val byCode = sections.associateBy { topology[it.id].orEmpty().trim().lowercase() }
+    val maxLength = sections.maxOfOrNull { it.lengthMeters }?.coerceAtLeast(1.0) ?: 1.0
+    val result = mutableMapOf<Long, PipeGeometry>()
+
+    fun visualLength(section: SectionEntity): Float = 150f + 250f * (section.lengthMeters / maxLength).toFloat().coerceIn(0.0f, 1.0f)
+
+    val numericCodes = byCode.keys.filter { it.matches(Regex("^\\d+$")) }.sortedBy { it.toInt() }
+    var cursor = Offset(90f, 230f)
+    numericCodes.forEach { code ->
+        val section = byCode[code] ?: return@forEach
+        val len = visualLength(section)
+        val end = Offset(cursor.x + len, cursor.y)
+        result[section.id] = PipeGeometry(cursor, end)
+        cursor = end
+    }
+
+    byCode.forEach { (code, section) ->
+        val m = Regex("^(\\d+)([ab])$").matchEntire(code) ?: return@forEach
+        val baseCode = m.groupValues[1]
+        val side = m.groupValues[2]
+        val parent = byCode[baseCode] ?: return@forEach
+        val parentGeometry = result[parent.id] ?: return@forEach
+        val len = visualLength(section)
+        val direction = if (side == "a") -1f else 1f
+        val start = parentGeometry.end
+        val end = Offset(start.x + len * 0.72f, start.y + direction * max(130f, len * 0.48f))
+        result[section.id] = PipeGeometry(start, end)
+    }
+
     return result
 }
 
 @Composable
-private fun InteractiveNetworkDiagram(
+private fun AutoNetworkDiagram(
     sections: List<SectionEntity>,
     testsBySection: Map<Long, HydraulicTestEntity>,
-    bends: Map<Long, Float>,
-    storedPoints: Map<String, NetworkLayoutStore.NodePoint>,
-    onPointsChanged: (Map<String, NetworkLayoutStore.NodePoint>) -> Unit
+    topology: Map<Long, String>,
+    bends: Map<Long, Float>
 ) {
-    val initial = remember(sections) { defaultPoints(sections) }
-    var points by remember(sections, storedPoints) {
-        mutableStateOf(initial.toMutableMap().apply { putAll(storedPoints.filterKeys { key -> sections.any { key.startsWith("${it.id}:") } }) })
-    }
-    var draggingKey by remember { mutableStateOf<String?>(null) }
-
-    val canvasWidth = 1180.dp
-    val canvasHeight = max(420, 150 + ((sections.size + 4) / 5) * 600).dp
+    val geometry = remember(sections, topology) { buildAutoGeometry(sections, topology) }
+    val canvasWidth = max(1000, ((geometry.values.maxOfOrNull { max(it.start.x, it.end.x) } ?: 800f) + 180f).toInt()).dp
+    val canvasHeight = 620.dp
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("ARMADO INTERACTIVO DE LA RED", fontWeight = FontWeight.ExtraBold, color = EditorBlue)
-            Text("Arrastra una punta hacia otra. Al acercarlas, se encajarán. Las longitudes mantienen una escala relativa para distinguir tramos cortos y largos.", fontSize = 10.sp, color = Color.Gray)
+            Text("VISTA AUTOMÁTICA DE LA RED", fontWeight = FontWeight.ExtraBold, color = EditorBlue)
+            Text("La escala es relativa: los tramos más largos se dibujan más largos. Las ramificaciones nacen automáticamente del tramo base.", fontSize = 10.sp, color = Color.Gray)
             Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                Canvas(
-                    Modifier
-                        .width(canvasWidth)
-                        .height(canvasHeight)
-                        .background(EditorBackground, RoundedCornerShape(12.dp))
-                        .pointerInput(sections, points) {
-                            detectDragGestures(
-                                onDragStart = { touch ->
-                                    draggingKey = points.minByOrNull { (_, p) -> hypot((p.x - touch.x).toDouble(), (p.y - touch.y).toDouble()) }
-                                        ?.takeIf { (_, p) -> hypot((p.x - touch.x).toDouble(), (p.y - touch.y).toDouble()) <= ENDPOINT_RADIUS * 2.2 }
-                                        ?.key
-                                },
-                                onDrag = { change, dragAmount ->
-                                    val key = draggingKey ?: return@detectDragGestures
-                                    change.consume()
-                                    val old = points[key] ?: return@detectDragGestures
-                                    val updated = points.toMutableMap()
-                                    updated[key] = NetworkLayoutStore.NodePoint(
-                                        (old.x + dragAmount.x).coerceIn(45f, size.width - 45f),
-                                        (old.y + dragAmount.y).coerceIn(45f, size.height - 45f)
-                                    )
-                                    points = updated
-                                },
-                                onDragEnd = {
-                                    val key = draggingKey
-                                    if (key != null) {
-                                        val current = points[key]
-                                        if (current != null) {
-                                            val target = points.entries
-                                                .filter { it.key != key && it.key.substringBefore(':') != key.substringBefore(':') }
-                                                .minByOrNull { (_, p) -> hypot((p.x - current.x).toDouble(), (p.y - current.y).toDouble()) }
-                                            if (target != null) {
-                                                val distance = hypot((target.value.x - current.x).toDouble(), (target.value.y - current.y).toDouble())
-                                                if (distance <= SNAP_DISTANCE) {
-                                                    points = points.toMutableMap().apply { put(key, target.value) }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    draggingKey = null
-                                    onPointsChanged(points)
-                                },
-                                onDragCancel = { draggingKey = null }
-                            )
-                        }
-                ) {
-                    // soft grid
-                    val gridColor = Color(0xFFDDE4EA).copy(alpha = 0.65f)
+                Canvas(Modifier.width(canvasWidth).height(canvasHeight).background(EditorBackground, RoundedCornerShape(12.dp))) {
+                    val grid = Color(0xFFDDE4EA).copy(alpha = 0.60f)
                     var gx = 0f
-                    while (gx < size.width) { drawLine(gridColor, Offset(gx, 0f), Offset(gx, size.height), 1f); gx += 50f }
+                    while (gx < size.width) { drawLine(grid, Offset(gx, 0f), Offset(gx, size.height), 1f); gx += 50f }
                     var gy = 0f
-                    while (gy < size.height) { drawLine(gridColor, Offset(0f, gy), Offset(size.width, gy), 1f); gy += 50f }
+                    while (gy < size.height) { drawLine(grid, Offset(0f, gy), Offset(size.width, gy), 1f); gy += 50f }
 
                     sections.forEach { section ->
-                        val p1data = points[startKey(section)] ?: return@forEach
-                        val p2data = points[endKey(section)] ?: return@forEach
-                        val p1 = Offset(p1data.x, p1data.y)
-                        val p2 = Offset(p2data.x, p2data.y)
+                        val g = geometry[section.id] ?: return@forEach
                         val bend = bends[section.id] ?: 0f
-                        val dx = p2.x - p1.x
-                        val dy = p2.y - p1.y
-                        val len = hypot(dx.toDouble(), dy.toDouble()).toFloat().coerceAtLeast(1f)
-                        val nx = -dy / len
-                        val ny = dx / len
-                        val control = Offset((p1.x + p2.x) / 2f + nx * bend * 110f, (p1.y + p2.y) / 2f + ny * bend * 110f)
+                        val control = Offset((g.start.x + g.end.x) / 2f, (g.start.y + g.end.y) / 2f + bend * 90f)
                         val pipeColor = when (testsBySection[section.id]?.status) {
                             "PASSED" -> EditorGreen
                             "REVIEW" -> EditorRed
@@ -298,60 +293,25 @@ private fun InteractiveNetworkDiagram(
                             "READY" -> EditorBlue
                             else -> EditorGray
                         }
-                        val path = Path().apply { moveTo(p1.x, p1.y); quadraticBezierTo(control.x, control.y, p2.x, p2.y) }
+                        val path = Path().apply { moveTo(g.start.x, g.start.y); quadraticBezierTo(control.x, control.y, g.end.x, g.end.y) }
                         drawPath(path, Color(0xFFD5DCE3), style = androidx.compose.ui.graphics.drawscope.Stroke(22f))
                         drawPath(path, pipeColor, style = androidx.compose.ui.graphics.drawscope.Stroke(12f))
+                        drawCircle(Color.White, 17f, g.start)
+                        drawCircle(EditorBlue, 11f, g.start)
+                        drawCircle(Color.White, 17f, g.end)
+                        drawCircle(EditorBlue, 11f, g.end)
 
-                        val mid = Offset((p1.x + p2.x) / 2f, (p1.y + p2.y) / 2f)
+                        val code = topology[section.id].orEmpty().uppercase()
+                        val mid = Offset((g.start.x + g.end.x) / 2f, (g.start.y + g.end.y) / 2f)
                         drawContext.canvas.nativeCanvas.drawText(
-                            "${section.startValve} → ${section.endValve}   ${section.lengthMeters.toInt()} m · Ø ${section.diameterInches}\"",
-                            mid.x - 90f,
+                            "$code · ${section.startValve}→${section.endValve} · ${section.lengthMeters.toInt()} m · Ø ${section.diameterInches}\"",
+                            mid.x - 70f,
                             mid.y - 18f,
-                            Paint().apply { isAntiAlias = true; textSize = 22f; this.color = android.graphics.Color.rgb(55, 67, 78) }
+                            Paint().apply { isAntiAlias = true; textSize = 21f; this.color = android.graphics.Color.rgb(55, 67, 78) }
                         )
-                    }
-
-                    points.forEach { (key, pointData) ->
-                        if (sections.none { key == startKey(it) || key == endKey(it) }) return@forEach
-                        val point = Offset(pointData.x, pointData.y)
-                        val joined = points.any { (otherKey, otherPoint) ->
-                            otherKey != key && otherKey.substringBefore(':') != key.substringBefore(':') &&
-                                hypot((otherPoint.x - pointData.x).toDouble(), (otherPoint.y - pointData.y).toDouble()) <= 3.0
-                        }
-                        drawCircle(Color.White, ENDPOINT_RADIUS + 5f, point)
-                        drawCircle(if (joined) EditorGreen else EditorBlue, ENDPOINT_RADIUS, point)
-                        drawCircle(Color.White, ENDPOINT_RADIUS - 9f, point)
                     }
                 }
             }
-            Text("Punta verde = unida a otro tubo · Punta azul = libre / terminal. Para guardar, todos los tubos deben pertenecer a una sola red conectada.", fontSize = 10.sp, color = Color.Gray)
         }
     }
-}
-
-private fun networkIsConnected(
-    sections: List<SectionEntity>,
-    points: Map<String, NetworkLayoutStore.NodePoint>
-): Boolean {
-    if (sections.isEmpty()) return false
-    if (sections.size == 1) return true
-
-    fun endpointsTouch(a: SectionEntity, b: SectionEntity): Boolean {
-        val aPoints = listOfNotNull(points[startKey(a)], points[endKey(a)])
-        val bPoints = listOfNotNull(points[startKey(b)], points[endKey(b)])
-        return aPoints.any { pa -> bPoints.any { pb -> hypot((pa.x - pb.x).toDouble(), (pa.y - pb.y).toDouble()) <= 4.0 } }
-    }
-
-    val visited = mutableSetOf<Long>()
-    val queue = ArrayDeque<SectionEntity>()
-    queue.add(sections.first())
-    visited += sections.first().id
-    while (queue.isNotEmpty()) {
-        val current = queue.removeFirst()
-        sections.filter { it.id !in visited && endpointsTouch(current, it) }.forEach {
-            visited += it.id
-            queue.add(it)
-        }
-    }
-    return visited.size == sections.size
 }
