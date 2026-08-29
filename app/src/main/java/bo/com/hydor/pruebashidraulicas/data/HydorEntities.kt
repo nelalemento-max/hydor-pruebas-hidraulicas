@@ -20,7 +20,7 @@ data class SectionEntity(
     val neighborhood: String,
     val startValve: String,
     val endValve: String,
-    val diameterMm: Int,
+    val diameterInches: String,
     val lengthMeters: Double
 )
 
