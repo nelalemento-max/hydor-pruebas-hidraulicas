@@ -52,22 +52,13 @@ fun ConsolidatedProjectExportButton(projectId: Long) {
             val bundles = included.map { section ->
                 val test = latest[section.id]
                 val readings = if (test != null) dao.getReadings(test.id) else emptyList()
-                var photoKept = false
-                val lightweightReadings = readings.map { reading ->
-                    if (reading.imagePath != null && !photoKept) {
-                        photoKept = true
-                        reading
-                    } else if (reading.imagePath != null) {
-                        reading.copy(imagePath = null)
-                    } else reading
-                }
-                FinalProjectPdf.TestBundle(section, test, lightweightReadings)
+                FinalProjectPdf.TestBundle(section, test, readings)
             }
 
             val extras = bundles.mapNotNull { it.test?.id }
                 .associateWith { TestExtraTimeStore.entries(context, it) }
 
-            val bytes = PbcFinalProjectPdf.build(
+            val bytes = PbcCompactReportPdf.build(
                 context = context,
                 project = project,
                 bundles = bundles,
@@ -96,7 +87,7 @@ fun ConsolidatedProjectExportButton(projectId: Long) {
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             busy = true
-            message = "Generando informe PBC…"
+            message = "Generando informe PBC compacto…"
             try {
                 generateAndWrite(uri)
                 lastSavedUri = uri
