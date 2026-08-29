@@ -178,18 +178,29 @@ private fun NewHydraulicTestScreen(navController: NavHostController) {
     var start by remember { mutableStateOf("") }; var end by remember { mutableStateOf("") }; var diameter by remember { mutableStateOf("") }; var length by remember { mutableStateOf("") }
     var nominal by remember { mutableStateOf("") }; var target by remember { mutableStateOf("") }; var drop by remember { mutableStateOf("0.40") }; var gaugeMax by remember { mutableStateOf(formatNumber(gauge.maxBar)) }
     var hours by remember { mutableStateOf("4") }; var operator by remember { mutableStateOf("") }; var error by remember { mutableStateOf<String?>(null) }
-    val valid = project.isNotBlank() && neighborhood.isNotBlank() && start.isNotBlank() && end.isNotBlank() && diameter.isNotBlank() && length.toDoubleOrNull() != null && nominal.toDoubleOrNull() != null && target.toDoubleOrNull() != null && drop.toDoubleOrNull() != null && gaugeMax.toDoubleOrNull() != null && hours.toDoubleOrNull() != null
+    val derivedLength = deriveTramoLengthMeters(start, end)
+    val validLength = derivedLength ?: length.toDoubleOrNull()
+    val valid = project.isNotBlank() && neighborhood.isNotBlank() && start.isNotBlank() && end.isNotBlank() && diameter.isNotBlank() && validLength != null && nominal.toDoubleOrNull() != null && target.toDoubleOrNull() != null && drop.toDoubleOrNull() != null && gaugeMax.toDoubleOrNull() != null && hours.toDoubleOrNull() != null
+
+    LaunchedEffect(start, end) {
+        deriveTramoLengthMeters(start, end)?.let { length = formatDerivedTramoLength(it) }
+    }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionTitle("Identificación del trabajo", "Usa las mismas referencias del plano y planilla.")
         HelpField("Proyecto / obra", project, "Ej.: Ampliación Sistema de Agua Potable") { project = it }
         HelpField("Batería o grupo de prueba (opcional)", battery, "Ej.: Batería 3") { battery = it }
         HelpField("Ubicación / barrio", neighborhood, "Ej.: Barrio San José") { neighborhood = it }
-        SectionTitle("Tramo sometido a prueba", "Usa referencias reales del plano.")
-        HelpField("Punto inicial del tramo", start, "Ej.: T-35, V-02 o Nodo N-14") { start = it }
-        HelpField("Punto final del tramo", end, "Ej.: T-34, V-03 o Nodo N-15") { end = it }
+        SectionTitle("Tramo sometido a prueba", "Formato técnico recomendado: T-0 → T-100, P-120 → P-275, V-0 → V-80. La letra identifica el punto y la diferencia numérica calcula la longitud automáticamente.")
+        HelpField("Punto inicial del tramo", start, "Ej.: T-0, P-120 o V-0") { start = it }
+        HelpField("Punto final del tramo", end, "Ej.: T-100, P-275 o V-80") { end = it }
         HelpField("Diámetro de tubería (pulgadas \" )", diameter, "Ej.: 2, 4, 6, 8 o 1 1/2") { diameter = it }
-        HelpField("Longitud del tramo (m)", length, "Ej.: 300.00") { length = it }
+        HelpField("Longitud del tramo (m)", length, if (derivedLength != null) "Calculada automáticamente: ${formatDerivedTramoLength(derivedLength)} m" else "Se calcula desde los puntos; también puedes ingresarla manualmente si la nomenclatura no usa progresivas.") { length = it }
+        derivedLength?.let {
+            Card(colors = CardDefaults.cardColors(containerColor = HydorGreen.copy(alpha = 0.10f)), modifier = Modifier.fillMaxWidth()) {
+                Text("LONGITUD AUTOMÁTICA: ${formatDerivedTramoLength(it)} m  ·  $start → $end", modifier = Modifier.padding(14.dp), color = HydorGreen, fontWeight = FontWeight.Bold)
+            }
+        }
         SectionTitle("Criterio técnico", "La presión de ensayo será el punto de partida oficial.")
         HelpField("Presión nominal (bar)", nominal, "Ej.: 10.00") { nominal = it }
         HelpField("Presión de ensayo / sometida (bar)", target, "Ej.: 7.00") { target = it }
@@ -202,8 +213,9 @@ private fun NewHydraulicTestScreen(navController: NavHostController) {
             onClick = {
                 scope.launch {
                     try {
+                        val finalLength = deriveTramoLengthMeters(start, end) ?: length.toDouble()
                         val projectId = dao.findProjectByName(project.trim())?.id ?: dao.insertProject(ProjectEntity(name = project.trim(), location = neighborhood.trim()))
-                        val sectionId = dao.insertSection(SectionEntity(projectId = projectId, battery = battery.trim(), neighborhood = neighborhood.trim(), startValve = start.trim(), endValve = end.trim(), diameterInches = diameter.trim(), lengthMeters = length.toDouble()))
+                        val sectionId = dao.insertSection(SectionEntity(projectId = projectId, battery = battery.trim(), neighborhood = neighborhood.trim(), startValve = start.trim(), endValve = end.trim(), diameterInches = diameter.trim(), lengthMeters = finalLength))
                         val testId = dao.insertTest(HydraulicTestEntity(sectionId = sectionId, operatorName = operator.trim(), nominalPressureBar = nominal.toDouble(), targetPressureBar = target.toDouble(), maxAllowedDropBar = drop.toDouble(), gaugeMaxBar = gaugeMax.toDouble(), durationMinutes = (hours.toDouble() * 60).toInt().coerceAtLeast(1), startedAt = 0L, status = "READY"))
                         navController.navigate(Routes.testReady(testId))
                     } catch (e: Exception) { error = e.message ?: "No se pudo guardar la prueba" }
