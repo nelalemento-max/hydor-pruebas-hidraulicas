@@ -12,7 +12,8 @@ object NetworkLayoutStore {
         val bends: Map<Long, Float>,
         val topologyCodes: Map<Long, String>,
         val saved: Boolean,
-        val consolidated: Boolean
+        val consolidated: Boolean,
+        val consolidatedAt: Long
     )
 
     fun load(context: Context, projectId: Long, defaultSectionIds: Set<Long>): LayoutState {
@@ -43,7 +44,8 @@ object NetworkLayoutStore {
             bends = bends,
             topologyCodes = topology,
             saved = p.getBoolean("saved_$projectId", false),
-            consolidated = p.getBoolean("consolidated_$projectId", false)
+            consolidated = p.getBoolean("consolidated_$projectId", false),
+            consolidatedAt = p.getLong("consolidated_at_$projectId", 0L)
         )
     }
 
@@ -63,11 +65,21 @@ object NetworkLayoutStore {
     }
 
     fun setConsolidated(context: Context, projectId: Long, value: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putBoolean("consolidated_$projectId", value)
-            .apply()
+        val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val editor = p.edit().putBoolean("consolidated_$projectId", value)
+        if (value) {
+            if (p.getLong("consolidated_at_$projectId", 0L) == 0L) {
+                editor.putLong("consolidated_at_$projectId", System.currentTimeMillis())
+            }
+        } else {
+            editor.remove("consolidated_at_$projectId")
+        }
+        editor.apply()
     }
 
     fun isConsolidated(context: Context, projectId: Long): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("consolidated_$projectId", false)
+
+    fun consolidatedAt(context: Context, projectId: Long): Long =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong("consolidated_at_$projectId", 0L)
 }
