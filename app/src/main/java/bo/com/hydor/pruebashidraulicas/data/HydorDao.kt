@@ -69,6 +69,12 @@ interface HydorDao {
     @Query("SELECT * FROM readings WHERE testId = :testId ORDER BY capturedAt ASC")
     suspend fun getReadings(testId: Long): List<PressureReadingEntity>
 
+    @Query("UPDATE readings SET confirmedPressureBar = :pressureBar WHERE id = :readingId")
+    suspend fun updateConfirmedReading(readingId: Long, pressureBar: Double)
+
+    @Query("DELETE FROM readings WHERE id = :readingId AND source != 'PROGRAMMED'")
+    suspend fun deleteEditableReading(readingId: Long)
+
     @Query("UPDATE tests SET startedAt = :startedAt, status = 'IN_PROGRESS' WHERE id = :testId")
     suspend fun startTest(testId: Long, startedAt: Long)
 
