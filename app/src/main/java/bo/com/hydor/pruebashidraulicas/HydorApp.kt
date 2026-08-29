@@ -34,7 +34,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.max
-import kotlin.math.min
 
 private val HydorBlue = Color(0xFF123A63)
 private val HydorLightBlue = Color(0xFFEAF2F8)
@@ -50,8 +49,10 @@ private object Routes {
     const val REPORTS = "reports"
     const val TEST_READY = "test_ready/{testId}"
     const val ACTIVE_TEST = "active_test/{testId}"
+    const val CAMERA_READING = "camera_reading/{testId}"
     fun testReady(testId: Long) = "test_ready/$testId"
     fun activeTest(testId: Long) = "active_test/$testId"
+    fun cameraReading(testId: Long) = "camera_reading/$testId"
 }
 
 @Composable
@@ -90,6 +91,19 @@ fun HydorApp() {
                 ) { backStack ->
                     ActiveTestScreen(navController, backStack.arguments?.getLong("testId") ?: 0L)
                 }
+                composable(
+                    Routes.CAMERA_READING,
+                    arguments = listOf(navArgument("testId") { type = NavType.LongType })
+                ) { backStack ->
+                    val testId = backStack.arguments?.getLong("testId") ?: 0L
+                    CameraReadingScreen(
+                        testId = testId,
+                        onSaved = {
+                            navController.popBackStack()
+                        },
+                        onCancel = { navController.popBackStack() }
+                    )
+                }
             }
         }
     }
@@ -114,12 +128,44 @@ private fun HydorTopBar() {
 
 @Composable
 private fun Dashboard(navController: NavHostController) {
+    val context = LocalContext.current
+    val dao = remember { HydorDatabase.getInstance(context).hydorDao() }
+    var activeTest by remember { mutableStateOf<HydraulicTestEntity?>(null) }
+    var activeSection by remember { mutableStateOf<SectionEntity?>(null) }
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(Unit) {
+        activeTest = dao.getActiveTest()
+        activeSection = activeTest?.let { dao.getSection(it.sectionId) }
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text("Trabajo de campo", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = HydorBlue)
         Text("Registro, seguimiento y evaluación técnica de pruebas hidráulicas, incluso sin conexión.")
+
+        activeTest?.let { test ->
+            val total = test.durationMinutes * 60_000L
+            val elapsed = if (test.startedAt > 0L) now - test.startedAt else 0L
+            val remaining = max(0L, total - elapsed)
+            Card(colors = CardDefaults.cardColors(containerColor = HydorAmber.copy(alpha = 0.12f)), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("PRUEBA EN CURSO", fontWeight = FontWeight.ExtraBold, color = HydorAmber)
+                    Text(activeSection?.let { "${it.startValve} → ${it.endValve}" } ?: "Prueba #${test.id}", fontWeight = FontWeight.Bold)
+                    Text("Tiempo restante: ${formatClock(remaining)}")
+                    Text("El ensayo continúa por hora real aunque recibas una llamada, bloquees la pantalla o salgas de HYDOR.", fontSize = 12.sp)
+                    Button(onClick = { navController.navigate(Routes.activeTest(test.id)) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("REANUDAR PRUEBA")
+                    }
+                }
+            }
+        }
 
         Button(
             onClick = { navController.navigate(Routes.NEW_TEST) },
@@ -138,7 +184,7 @@ private fun Dashboard(navController: NavHostController) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("MODO CAMPO", fontWeight = FontWeight.Bold, color = HydorBlue)
                 Text("Almacenamiento local · Sin conexión")
-                Text("Próximo módulo: cámara + reconocimiento del manómetro + confirmación humana")
+                Text("Cámara + reconocimiento asistido de aguja + confirmación humana")
             }
         }
     }
@@ -171,6 +217,7 @@ private fun NewHydraulicTestScreen(navController: NavHostController) {
     var nominalPressure by remember { mutableStateOf("") }
     var targetPressure by remember { mutableStateOf("") }
     var maxDrop by remember { mutableStateOf("0.40") }
+    var gaugeMax by remember { mutableStateOf("10") }
     var durationHours by remember { mutableStateOf("4") }
     var operator by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
@@ -179,7 +226,7 @@ private fun NewHydraulicTestScreen(navController: NavHostController) {
     val valid = project.isNotBlank() && neighborhood.isNotBlank() && startPoint.isNotBlank() && endPoint.isNotBlank() &&
         diameter.isNotBlank() && length.toDoubleOrNull() != null &&
         nominalPressure.toDoubleOrNull() != null && targetPressure.toDoubleOrNull() != null &&
-        maxDrop.toDoubleOrNull() != null && durationHours.toDoubleOrNull() != null
+        maxDrop.toDoubleOrNull() != null && gaugeMax.toDoubleOrNull() != null && durationHours.toDoubleOrNull() != null
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -200,6 +247,7 @@ private fun NewHydraulicTestScreen(navController: NavHostController) {
         HelpField("Presión nominal de la tubería (bar)", nominalPressure, "Ej.: 10.00 bar") { nominalPressure = it }
         HelpField("Presión de ensayo / sometida (bar)", targetPressure, "Ej.: 7.00 bar") { targetPressure = it }
         HelpField("Caída máxima permitida (bar)", maxDrop, "Ej.: 0.40 bar según especificación del proyecto") { maxDrop = it }
+        HelpField("Escala máxima del manómetro (bar)", gaugeMax, "Ej.: si el manómetro marca de 0 a 10 bar, escribe 10") { gaugeMax = it }
         HelpField("Duración del ensayo (horas)", durationHours, "Ej.: 4. Para pruebas rápidas de desarrollo puedes usar 0.05") { durationHours = it }
         HelpField("Operador responsable", operator, "Ej.: Ing. Marco A. Mendoza Torres") { operator = it }
 
@@ -234,6 +282,7 @@ private fun NewHydraulicTestScreen(navController: NavHostController) {
                                 nominalPressureBar = nominalPressure.toDouble(),
                                 targetPressureBar = targetPressure.toDouble(),
                                 maxAllowedDropBar = maxDrop.toDouble(),
+                                gaugeMaxBar = gaugeMax.toDouble(),
                                 durationMinutes = durationMinutes,
                                 startedAt = 0L,
                                 status = "READY"
@@ -341,6 +390,7 @@ private fun TechnicalSummary(project: ProjectEntity?, section: SectionEntity, te
             Text("Nominal: ${formatNumber(test.nominalPressureBar)} bar")
             Text("Ensayo: ${formatNumber(test.targetPressureBar)} bar")
             Text("Caída máxima permitida: ${formatNumber(test.maxAllowedDropBar)} bar", fontWeight = FontWeight.Bold)
+            Text("Manómetro: 0–${formatNumber(test.gaugeMaxBar)} bar")
             Text("Duración: ${formatDuration(test.durationMinutes)}")
         }
     }
@@ -398,9 +448,10 @@ private fun ActiveTestScreen(navController: NavHostController, testId: Long) {
     }
 
     LaunchedEffect(testId) { reload() }
-    LaunchedEffect(test?.startedAt) {
+    LaunchedEffect(Unit) {
         while (true) {
             now = System.currentTimeMillis()
+            reload()
             delay(1000)
         }
     }
@@ -433,6 +484,7 @@ private fun ActiveTestScreen(navController: NavHostController, testId: Long) {
                 }
                 LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
                 Text("Ensayo ${formatNumber(currentTest?.targetPressureBar ?: 0.0)} bar · Límite de caída ${formatNumber(currentTest?.maxAllowedDropBar ?: 0.0)} bar", fontSize = 12.sp)
+                Text("El tiempo se calcula desde la hora real de inicio: no se detiene si entra una llamada o la app queda en segundo plano.", fontSize = 11.sp, color = Color(0xFF5F6368))
             }
         }
 
@@ -452,11 +504,17 @@ private fun ActiveTestScreen(navController: NavHostController, testId: Long) {
         SectionTitle("Curva de presión", "Línea continua: lecturas reales. Línea horizontal: límite mínimo admisible según la caída configurada.")
         PressureChart(readings, currentTest?.maxAllowedDropBar ?: 0.0)
 
-        SectionTitle("Nueva lectura", "Por ahora confirma manualmente el valor. La siguiente etapa conectará la cámara del celular.")
-        HelpField("Presión confirmada (bar)", pressureInput, "Ej.: 6.92") { pressureInput = it }
+        SectionTitle("Nueva lectura", "Puedes registrar manualmente o fotografiar el manómetro. La lectura de cámara siempre requiere confirmación del técnico.")
         Button(
+            onClick = { navController.navigate(Routes.cameraReading(testId)) },
+            modifier = Modifier.fillMaxWidth().height(58.dp),
+            shape = RoundedCornerShape(14.dp)
+        ) { Text("📷  FOTOGRAFIAR MANÓMETRO", fontWeight = FontWeight.Bold) }
+
+        HelpField("Presión manual confirmada (bar)", pressureInput, "Ej.: 6.92") { pressureInput = it }
+        OutlinedButton(
             onClick = {
-                val value = pressureInput.toDoubleOrNull() ?: return@Button
+                val value = pressureInput.toDoubleOrNull() ?: return@OutlinedButton
                 scope.launch {
                     dao.insertReading(
                         PressureReadingEntity(
@@ -470,20 +528,20 @@ private fun ActiveTestScreen(navController: NavHostController, testId: Long) {
                         )
                     )
                     pressureInput = ""
-                    message = "Lectura registrada"
+                    message = "Lectura manual registrada"
                     reload()
                 }
             },
             enabled = pressureInput.toDoubleOrNull() != null,
             modifier = Modifier.fillMaxWidth().height(54.dp)
-        ) { Text(if (readings.isEmpty()) "REGISTRAR PRESIÓN INICIAL" else "REGISTRAR LECTURA") }
+        ) { Text(if (readings.isEmpty()) "REGISTRAR PRESIÓN INICIAL MANUAL" else "REGISTRAR LECTURA MANUAL") }
 
         message?.let { Text(it, color = HydorGreen) }
 
         if (readings.isNotEmpty()) {
             Text("Historial de lecturas", fontWeight = FontWeight.Bold, color = HydorBlue)
             readings.forEachIndexed { index, reading ->
-                ReadingRow(index + 1, reading, readings.first().capturedAt)
+                ReadingRow(index + 1, reading, readings.first().capturedAt, currentTest?.gaugeMaxBar ?: 10.0)
             }
         }
 
@@ -608,15 +666,27 @@ private fun StatCard(label: String, value: String, modifier: Modifier = Modifier
 }
 
 @Composable
-private fun ReadingRow(number: Int, reading: PressureReadingEntity, firstTime: Long) {
+private fun ReadingRow(number: Int, reading: PressureReadingEntity, firstTime: Long, gaugeMaxBar: Double) {
     OutlinedCard(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("#$number", fontWeight = FontWeight.Bold, color = HydorBlue, modifier = Modifier.width(38.dp))
+        Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            PressureGauge(
+                pressureBar = reading.confirmedPressureBar,
+                maxBar = gaugeMaxBar,
+                modifier = Modifier.size(82.dp)
+            )
+            Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
-                Text("${formatNumber(reading.confirmedPressureBar)} bar", fontWeight = FontWeight.Bold)
+                Text("Lectura #$number", fontSize = 11.sp, color = Color(0xFF5F6368))
+                Text("${formatNumber(reading.confirmedPressureBar)} bar", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, color = HydorBlue)
                 Text("${formatTime(reading.capturedAt)} · +${formatElapsed(reading.capturedAt - firstTime)}", fontSize = 12.sp)
+                if (reading.detectedPressureBar != null) {
+                    Text("Detectado: ${formatNumber(reading.detectedPressureBar)} bar · Confirmado por técnico", fontSize = 11.sp)
+                }
             }
-            Text(if (reading.source == "MANUAL") "Manual" else "Cámara", fontSize = 12.sp)
+            Column(horizontalAlignment = Alignment.End) {
+                Text(if (reading.source == "MANUAL") "MANUAL" else "CÁMARA", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                reading.detectionConfidence?.let { Text("${(it * 100).toInt()}%", fontSize = 11.sp) }
+            }
         }
     }
 }
@@ -697,11 +767,14 @@ private fun ReportsScreen(navController: NavHostController) {
                             color = statusColor
                         )
                         Text("Límite configurado: ${formatNumber(test.maxAllowedDropBar)} bar", fontSize = 12.sp)
+                        if (test.status == "IN_PROGRESS") {
+                            TextButton(onClick = { navController.navigate(Routes.activeTest(test.id)) }) { Text("Reanudar") }
+                        }
                     }
                 }
             }
         }
-        Text("La generación automática de PDF se incorporará después de integrar cámara y evidencias fotográficas.", fontSize = 12.sp)
+        Text("La generación automática de PDF se incorporará después de consolidar las evidencias fotográficas.", fontSize = 12.sp)
         TextButton(onClick = { navController.popBackStack() }) { Text("Volver") }
     }
 }
