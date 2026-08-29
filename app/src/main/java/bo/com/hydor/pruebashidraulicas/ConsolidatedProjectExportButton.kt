@@ -31,6 +31,11 @@ fun ConsolidatedProjectExportButton(projectId: Long) {
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var lastSavedUri by remember { mutableStateOf<Uri?>(null) }
+    var projectName by remember { mutableStateOf("Proyecto_$projectId") }
+
+    LaunchedEffect(projectId) {
+        projectName = dao.getProject(projectId)?.name?.ifBlank { "Proyecto_$projectId" } ?: "Proyecto_$projectId"
+    }
 
     suspend fun generateAndWrite(uri: Uri) {
         withContext(Dispatchers.IO) {
@@ -61,7 +66,8 @@ fun ConsolidatedProjectExportButton(projectId: Long) {
 
             val extras = bundles.mapNotNull { it.test?.id }
                 .associateWith { TestExtraTimeStore.entries(context, it) }
-            val bytes = FinalProjectPdf.build(
+
+            val bytes = PbcFinalProjectPdf.build(
                 context = context,
                 project = project,
                 bundles = bundles,
@@ -82,7 +88,7 @@ fun ConsolidatedProjectExportButton(projectId: Long) {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        runCatching { context.startActivity(Intent.createChooser(intent, "Abrir informe PDF")) }
+        runCatching { context.startActivity(Intent.createChooser(intent, "Abrir informe PBC")) }
             .onFailure { message = "PDF guardado, pero no se encontró una aplicación para abrirlo." }
     }
 
@@ -90,11 +96,11 @@ fun ConsolidatedProjectExportButton(projectId: Long) {
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             busy = true
-            message = "Generando y guardando PDF…"
+            message = "Generando informe PBC…"
             try {
                 generateAndWrite(uri)
                 lastSavedUri = uri
-                message = "PDF guardado correctamente. Abriendo informe…"
+                message = "Informe PBC guardado correctamente. Abriendo…"
                 openPdf(uri)
             } catch (e: Exception) {
                 message = "No se pudo generar el PDF: ${e.message ?: "error desconocido"}"
@@ -108,20 +114,21 @@ fun ConsolidatedProjectExportButton(projectId: Long) {
         onClick = {
             message = null
             val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
-            launcher.launch("HYDOR_Informe_Proyecto_${projectId}_$stamp.pdf")
+            val safeName = projectName.replace(Regex("[^A-Za-z0-9ÁÉÍÓÚáéíóúÑñ_-]+"), "_").take(45)
+            launcher.launch("PBC_Informe_Prueba_Hidraulica_${safeName}_$stamp.pdf")
         },
         enabled = !busy,
-        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF123A63)),
+        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0E2E4D)),
         modifier = Modifier.fillMaxWidth().height(54.dp)
     ) {
-        Text(if (busy) "GENERANDO PDF…" else "GENERAR / GUARDAR PDF", fontWeight = FontWeight.Bold)
+        Text(if (busy) "GENERANDO INFORME PBC…" else "GENERAR / GUARDAR PDF PBC", fontWeight = FontWeight.Bold)
     }
 
     lastSavedUri?.let { uri ->
         Button(
             onClick = { openPdf(uri) },
             enabled = !busy,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF26734D)),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF26914C)),
             modifier = Modifier.fillMaxWidth().height(50.dp)
         ) {
             Text("ABRIR ÚLTIMO PDF", fontWeight = FontWeight.Bold)
