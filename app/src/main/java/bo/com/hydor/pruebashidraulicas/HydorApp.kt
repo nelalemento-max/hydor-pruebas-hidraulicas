@@ -43,10 +43,12 @@ private object Routes {
     const val TEST_READY = "test_ready/{testId}"
     const val ACTIVE_TEST = "active_test/{testId}"
     const val CAMERA_READING = "camera_reading/{testId}"
+    const val REVIEW_TEST = "review_test/{testId}"
 
     fun testReady(testId: Long) = "test_ready/$testId"
     fun activeTest(testId: Long) = "active_test/$testId"
     fun cameraReading(testId: Long) = "camera_reading/$testId"
+    fun reviewTest(testId: Long) = "review_test/$testId"
 }
 
 @Composable
@@ -95,6 +97,21 @@ fun HydorApp() {
                         testId = id,
                         onSaved = { navController.popBackStack() },
                         onCancel = { navController.popBackStack() }
+                    )
+                }
+                composable(
+                    Routes.REVIEW_TEST,
+                    arguments = listOf(navArgument("testId") { type = NavType.LongType })
+                ) { entry ->
+                    val id = entry.arguments?.getLong("testId") ?: 0L
+                    TestReviewScreen(
+                        testId = id,
+                        onBackToTest = { navController.popBackStack() },
+                        onFinished = {
+                            navController.navigate(Routes.REPORTS) {
+                                popUpTo(Routes.DASHBOARD)
+                            }
+                        }
                     )
                 }
             }
@@ -562,23 +579,23 @@ private fun ActiveTestScreen(navController: NavHostController, testId: Long) {
         Button(
             onClick = {
                 if (remaining > 0L) showEarly = true
-                else finalizeTest(scope, dao, testId, readings, currentTest, navController)
+                else navController.navigate(Routes.reviewTest(testId))
             },
-            enabled = readings.isNotEmpty(),
+            enabled = readings.any { it.source != "PROGRAMMED" },
             modifier = Modifier.fillMaxWidth().height(56.dp)
-        ) { Text("FINALIZAR Y EVALUAR PRUEBA", fontWeight = FontWeight.Bold) }
+        ) { Text("REVISAR Y EVALUAR PRUEBA", fontWeight = FontWeight.Bold) }
     }
 
     if (showEarly) {
         AlertDialog(
             onDismissRequest = { showEarly = false },
             title = { Text("Finalización anticipada") },
-            text = { Text("Aún faltan ${formatClock(remaining)} del tiempo acordado. ¿Deseas finalizar y evaluar antes de completar el tiempo programado?") },
+            text = { Text("Aún faltan ${formatClock(remaining)} del tiempo acordado. ¿Deseas pasar a la revisión final antes de completar el tiempo programado?") },
             confirmButton = {
                 Button(onClick = {
                     showEarly = false
-                    finalizeTest(scope, dao, testId, readings, currentTest, navController)
-                }) { Text("SÍ, FINALIZAR") }
+                    navController.navigate(Routes.reviewTest(testId))
+                }) { Text("SÍ, REVISAR") }
             },
             dismissButton = {
                 TextButton(onClick = { showEarly = false }) { Text("CONTINUAR PRUEBA") }
@@ -590,12 +607,12 @@ private fun ActiveTestScreen(navController: NavHostController, testId: Long) {
         AlertDialog(
             onDismissRequest = {},
             title = { Text("Tiempo de prueba finalizado") },
-            text = { Text("Se cumplió el tiempo programado. Puedes finalizar y evaluar o registrar tiempo extra si técnicamente lo necesitas.") },
+            text = { Text("Se cumplió el tiempo programado. Puedes revisar y evaluar el resultado o registrar tiempo extra si técnicamente lo necesitas.") },
             confirmButton = {
                 Button(onClick = {
                     showEnded = false
-                    finalizeTest(scope, dao, testId, readings, currentTest, navController)
-                }) { Text("FINALIZAR") }
+                    navController.navigate(Routes.reviewTest(testId))
+                }) { Text("REVISAR Y EVALUAR") }
             },
             dismissButton = {
                 TextButton(onClick = {
@@ -630,22 +647,6 @@ private fun ActiveTestScreen(navController: NavHostController, testId: Long) {
                 TextButton(onClick = { extraDialog = false }) { Text("CANCELAR") }
             }
         )
-    }
-}
-
-private fun finalizeTest(
-    scope: kotlinx.coroutines.CoroutineScope,
-    dao: HydorDao,
-    testId: Long,
-    readings: List<PressureReadingEntity>,
-    test: HydraulicTestEntity?,
-    navController: NavHostController
-) {
-    scope.launch {
-        val evaluation = evaluate(readings, test?.targetPressureBar ?: 0.0, test?.maxAllowedDropBar ?: 0.0)
-        val status = if (readings.isNotEmpty() && evaluation.drop <= (test?.maxAllowedDropBar ?: 0.0)) "PASSED" else "REVIEW"
-        dao.finishTest(testId, System.currentTimeMillis(), status)
-        navController.navigate(Routes.REPORTS) { popUpTo(Routes.DASHBOARD) }
     }
 }
 
@@ -784,6 +785,8 @@ private fun ReportsScreen(navController: NavHostController) {
                     Text("Límite mínimo: ${formatNumber(test.targetPressureBar - test.maxAllowedDropBar)} bar")
                     if (test.status == "IN_PROGRESS") {
                         TextButton(onClick = { navController.navigate(Routes.activeTest(test.id)) }) { Text("Reanudar") }
+                    } else if (test.status == "PASSED" || test.status == "REVIEW") {
+                        TextButton(onClick = { navController.navigate(Routes.reviewTest(test.id)) }) { Text("Ver detalle y evidencias") }
                     }
                 }
             }
