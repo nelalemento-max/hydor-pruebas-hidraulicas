@@ -41,14 +41,22 @@ fun ConsolidatedProjectExportButton(projectId: Long) {
                 .filter { test -> included.any { it.id == test.sectionId } }
                 .groupBy { it.sectionId }
                 .mapValues { (_, list) -> list.maxByOrNull { it.id }!! }
+
             val bundles = included.map { section ->
                 val test = latest[section.id]
-                FinalProjectPdf.TestBundle(
-                    section = section,
-                    test = test,
-                    readings = if (test != null) dao.getReadings(test.id) else emptyList()
-                )
+                val readings = if (test != null) dao.getReadings(test.id) else emptyList()
+                var photoKept = false
+                val lightweightReadings = readings.map { reading ->
+                    if (reading.imagePath != null && !photoKept) {
+                        photoKept = true
+                        reading
+                    } else if (reading.imagePath != null) {
+                        reading.copy(imagePath = null)
+                    } else reading
+                }
+                FinalProjectPdf.TestBundle(section, test, lightweightReadings)
             }
+
             val extras = bundles.mapNotNull { it.test?.id }
                 .associateWith { TestExtraTimeStore.entries(context, it) }
             val bytes = FinalProjectPdf.build(
