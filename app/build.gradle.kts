@@ -24,6 +24,16 @@ android {
     }
 }
 
+// Android Studio/Gradle 9 sync compatibility workaround.
+// Some IDE tooling creates *ClasspathCopy configurations as both resolvable
+// and consumable; Gradle 9 rejects that. These copies are resolution-only.
+configurations.configureEach {
+    if (name.endsWith("ClasspathCopy")) {
+        isCanBeConsumed = false
+        isCanBeResolved = true
+    }
+}
+
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.activity:activity-compose:1.10.0")
